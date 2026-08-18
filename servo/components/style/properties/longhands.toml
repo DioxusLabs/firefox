@@ -4057,7 +4057,7 @@ keyword = { values = ["row", "row-reverse", "column", "column-reverse"] }
 
 [flex-wrap]
 type = "FlexWrap"
-initial = "computed::FlexWrap::Nowrap"
+initial = "computed::FlexWrap::NOWRAP"
 struct = "position"
 spec = "https://drafts.csswg.org/css-flexbox/#flex-wrap-property"
 animation_type = "discrete"

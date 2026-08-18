@@ -639,38 +639,8 @@ fn static_assert() {
 <%self:impl_trait style_struct_name="Padding"></%self:impl_trait>
 <%self:impl_trait style_struct_name="Page"></%self:impl_trait>
 
-<%self:impl_trait style_struct_name="Position" skip_longhands="flex-wrap">
+<%self:impl_trait style_struct_name="Position">
     ${impl_physical_sides("inset", ["top", "right", "bottom", "left"])}
-    #[allow(non_snake_case)]
-    pub fn set_flex_wrap(&mut self, v: longhands::flex_wrap::computed_value::T) {
-        use crate::values::computed::FlexWrap;
-        self.mFlexWrap = match v {
-            FlexWrap::Nowrap => structs::StyleFlexWrap::Nowrap,
-            FlexWrap::Wrap => structs::StyleFlexWrap::Wrap,
-            FlexWrap::WrapReverse => structs::StyleFlexWrap::WrapReverse,
-        };
-    }
-    #[allow(non_snake_case)]
-    pub fn copy_flex_wrap_from(&mut self, other: &Self) {
-        self.mFlexWrap = other.mFlexWrap;
-    }
-    #[allow(non_snake_case)]
-    pub fn reset_flex_wrap(&mut self, other: &Self) {
-        self.copy_flex_wrap_from(other)
-    }
-    #[allow(non_snake_case)]
-    pub fn flex_wrap_equals(&self, other: &Self) -> bool {
-        self.mFlexWrap == other.mFlexWrap
-    }
-    #[allow(non_snake_case)]
-    pub fn clone_flex_wrap(&self) -> longhands::flex_wrap::computed_value::T {
-        use crate::values::computed::FlexWrap;
-        match self.mFlexWrap {
-            structs::StyleFlexWrap::Nowrap => FlexWrap::Nowrap,
-            structs::StyleFlexWrap::Wrap => FlexWrap::Wrap,
-            structs::StyleFlexWrap::WrapReverse => FlexWrap::WrapReverse,
-        }
-    }
     pub fn set_computed_justify_items(&mut self, v: values::specified::JustifyItems) {
         debug_assert_ne!(v, values::specified::JustifyItems::legacy());
         self.mJustifyItems.computed = v;

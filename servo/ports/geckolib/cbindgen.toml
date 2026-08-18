@@ -319,6 +319,7 @@ include = [
   "ClipPath",
   "ShapeOutside",
   "GridAutoFlow",
+  "FlexWrap",
   "Cursor",
   "SVGStrokeDashArray",
   "SVGLength",

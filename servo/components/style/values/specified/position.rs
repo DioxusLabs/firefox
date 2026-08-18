@@ -27,7 +27,7 @@ use crate::values::specified::percentage::NoCalcPercentage;
 use crate::values::specified::{AllowQuirks, Integer, LengthPercentage, NonNegativeNumber};
 use crate::values::{AtomIdent, DashedIdent};
 use crate::Atom;
-use cssparser::{match_ignore_ascii_case, Parser, Token};
+use cssparser::{match_ignore_ascii_case, Parser};
 use num_traits::FromPrimitive;
 use selectors::parser::SelectorParseErrorKind;
 use servo_arc::Arc;
@@ -36,9 +36,7 @@ use std::collections::hash_map::Entry;
 use std::fmt::{self, Write};
 use style_traits::arc_slice::ArcSlice;
 use style_traits::values::specified::AllowedNumericType;
-use style_traits::{
-    CssWriter, KeywordsCollectFn, ParseError, SpecifiedValueInfo, StyleParseErrorKind, ToCss,
-};
+use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
 use thin_vec::ThinVec;
 
 /// The specified value of a CSS `<position>`
@@ -1797,92 +1795,55 @@ fn flex_wrap_balance_enabled() -> bool {
 /// `nowrap | [ wrap | wrap-reverse ] || balance`
 ///
 /// <https://drafts.csswg.org/css-flexbox-2/#flex-wrap-property>
-#[allow(missing_docs)]
 #[derive(
     Clone,
     Copy,
     Debug,
     Eq,
-    Hash,
     MallocSizeOf,
+    Parse,
     PartialEq,
+    SpecifiedValueInfo,
     ToComputedValue,
     ToCss,
     ToResolvedValue,
     ToShmem,
     ToTyped,
 )]
-#[repr(u8)]
-pub enum FlexWrap {
-    Nowrap,
-    Wrap,
-    WrapReverse,
-    #[cfg(feature = "servo")]
-    Balance,
-    #[cfg(feature = "servo")]
-    #[css(keyword = "wrap-reverse balance")]
-    WrapReverseBalance,
-}
-
-impl Parse for FlexWrap {
-    /// `nowrap | [ wrap | wrap-reverse ] || balance`
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<FlexWrap, ParseError<'i>> {
-        let mut nowrap = false;
-        let mut wrap: Option<FlexWrap> = None;
-        let mut balance = false;
-        loop {
-            let result = input.try_parse(|input| -> Result<(), ParseError<'i>> {
-                let location = input.current_source_location();
-                let ident = input.expect_ident_cloned()?;
-                let success = match_ignore_ascii_case! { &ident,
-                    "nowrap" if !nowrap && wrap.is_none() && !balance => {
-                        nowrap = true;
-                        true
-                    },
-                    "wrap" if !nowrap && wrap.is_none() => {
-                        wrap = Some(FlexWrap::Wrap);
-                        true
-                    },
-                    "wrap-reverse" if !nowrap && wrap.is_none() => {
-                        wrap = Some(FlexWrap::WrapReverse);
-                        true
-                    },
-                    "balance" if !nowrap && !balance && flex_wrap_balance_enabled() => {
-                        balance = true;
-                        true
-                    },
-                    _ => false,
-                };
-                if !success {
-                    return Err(location.new_unexpected_token_error(Token::Ident(ident.clone())));
-                }
-                Ok(())
-            });
-            if result.is_err() {
-                break;
-            }
-        }
-        if nowrap {
-            return Ok(FlexWrap::Nowrap);
-        }
-        Ok(match (wrap, balance) {
-            (Some(FlexWrap::Wrap), false) => FlexWrap::Wrap,
-            (Some(FlexWrap::WrapReverse), false) => FlexWrap::WrapReverse,
-            #[cfg(feature = "servo")]
-            (Some(FlexWrap::Wrap), true) | (None, true) => FlexWrap::Balance,
-            #[cfg(feature = "servo")]
-            (Some(FlexWrap::WrapReverse), true) => FlexWrap::WrapReverseBalance,
-            _ => return Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError)),
-        })
+#[css(bitflags(
+    single = "nowrap",
+    mixed = "wrap,wrap-reverse,balance",
+    validate_mixed = "Self::validate_and_simplify"
+))]
+#[repr(C)]
+pub struct FlexWrap(u8);
+bitflags! {
+    impl FlexWrap: u8 {
+        /// `nowrap`
+        const NOWRAP = 0;
+        /// `wrap` - mutually exclusive with `wrap-reverse`
+        const WRAP = 1 << 0;
+        /// `wrap-reverse` - mutually exclusive with `wrap`
+        const WRAP_REVERSE = 1 << 1;
+        /// `balance`
+        const BALANCE = 1 << 2;
     }
 }
 
-impl SpecifiedValueInfo for FlexWrap {
-    fn collect_completion_keywords(f: KeywordsCollectFn) {
-        f(&["nowrap", "wrap", "wrap-reverse", "balance"]);
+impl FlexWrap {
+    /// `nowrap | [ wrap | wrap-reverse ] || balance`
+    fn validate_and_simplify(&mut self) -> bool {
+        if self.contains(Self::WRAP | Self::WRAP_REVERSE) {
+            return false;
+        }
+        if self.contains(Self::BALANCE) {
+            if !flex_wrap_balance_enabled() {
+                return false;
+            }
+            // `wrap balance` computes to `balance`.
+            self.remove(Self::WRAP);
+        }
+        true
     }
 }
 
