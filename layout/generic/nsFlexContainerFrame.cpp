@@ -60,6 +60,21 @@ static mozilla::LazyLogModule gFlexContainerLog("FlexContainer");
 #define FLEX_LOGV(message, ...) \
   MOZ_LOG(gFlexContainerLog, LogLevel::Verbose, ("  " message, ##__VA_ARGS__));
 
+// When a multi-line container requests a minimum number of lines
+// ('flex-line-count'), definite cross-axis available space for measuring flex
+// items is divided between the requested number of lines (after subtracting
+// the cross-axis gaps between them).
+// See https://github.com/w3c/csswg-drafts/issues/13414
+static nscoord DividedCrossSpaceForMeasuring(nscoord aCrossAvailableSpace,
+                                             int32_t aLineCount,
+                                             nscoord aCrossGapSize) {
+  if (aLineCount <= 1 || aCrossAvailableSpace == NS_UNCONSTRAINEDSIZE) {
+    return aCrossAvailableSpace;
+  }
+  return std::max(0, (aCrossAvailableSpace - aCrossGapSize * (aLineCount - 1)) /
+                         aLineCount);
+}
+
 // Returns the OrderState enum we should pass to CSSOrderAwareFrameIterator
 // (depending on whether aFlexContainer has
 // NS_STATE_FLEX_NORMAL_FLOW_CHILDREN_IN_CSS_ORDER state bit).
@@ -1529,12 +1544,39 @@ void nsFlexContainerFrame::GenerateFlexItemForChild(
     crossSizeOverride.emplace(StyleSize::Stretch());
   }
 
+  LogicalSize availableSpaceForItem = aParentReflowInput.ComputedSize(flexWM);
+  const auto* containerStylePos = aParentReflowInput.mStylePosition;
+  if (!IsSingleLine(aParentReflowInput.mFrame, containerStylePos)) {
+    nscoord& crossAvailableSpace = aAxisTracker.IsRowOriented()
+                                       ? availableSpaceForItem.BSize(flexWM)
+                                       : availableSpaceForItem.ISize(flexWM);
+    const auto& crossGapStyle = aAxisTracker.IsRowOriented()
+                                    ? containerStylePos->mRowGap
+                                    : containerStylePos->mColumnGap;
+    crossAvailableSpace = DividedCrossSpaceForMeasuring(
+        crossAvailableSpace, containerStylePos->mFlexLineCount,
+        nsLayoutUtils::ResolveGapToLength(crossGapStyle,
+                                          aTentativeContentBoxCrossSize));
+  }
+
   // Create temporary reflow input just for sizing -- to get hypothetical
   // main-size and the computed values of min / max main-size property.
   // (This reflow input will _not_ be used for reflow.)
+  const LogicalSize availableSpaceInChildWM =
+      availableSpaceForItem.ConvertTo(childWM, flexWM);
   ReflowInput childRI(PresContext(), aParentReflowInput, aChildFrame,
-                      aParentReflowInput.ComputedSize(childWM), Nothing(), {},
-                      sizeOverrides, {ComputeSizeFlag::ShrinkWrap});
+                      availableSpaceInChildWM, Nothing(),
+                      {ReflowInput::InitFlag::CallerWillInit}, sizeOverrides,
+                      {ComputeSizeFlag::ShrinkWrap});
+  if (childWM.IsOrthogonalTo(flexWM)) {
+    // The ReflowInput constructor may have replaced the available inline size
+    // for this orthogonal-flow item with a limit derived from its containing
+    // block; re-apply our (possibly divided) available inline size on top of
+    // that limit.
+    childRI.SetAvailableISize(std::min(childRI.AvailableISize(),
+                                       availableSpaceInChildWM.ISize(childWM)));
+  }
+  childRI.Init(PresContext());
 
   // FLEX GROW & SHRINK WEIGHTS
   // --------------------------
@@ -2171,7 +2213,30 @@ nscoord nsFlexContainerFrame::MeasureFlexItemContentBSize(
 
   ReflowInput childRIForMeasuringBSize(
       PresContext(), aParentReflowInput, aFlexItem.Frame(), availSize,
-      Nothing(), {}, sizeOverrides, {ComputeSizeFlag::ShrinkWrap});
+      Nothing(), {ReflowInput::InitFlag::CallerWillInit}, sizeOverrides,
+      {ComputeSizeFlag::ShrinkWrap});
+
+  // The item's block axis is the container's main axis here, so the item's
+  // inline axis is the container's cross axis, and the divided cross space
+  // rule applies to the item's available inline size. Apply the division
+  // before Init() so that it affects the computed inline size, but after the
+  // constructor so that it also applies on top of the available inline size
+  // established for items in an orthogonal flow.
+  const auto* containerStylePos = aParentReflowInput.mStylePosition;
+  if (!IsSingleLine(aParentReflowInput.mFrame, containerStylePos)) {
+    MOZ_ASSERT(!aFlexItem.IsInlineAxisMainAxis(),
+               "This method measures content block-size for items whose block "
+               "axis is the container's main axis");
+    const FlexboxAxisTracker axisTracker(this);
+    const auto& crossGapStyle = axisTracker.IsRowOriented()
+                                    ? containerStylePos->mRowGap
+                                    : containerStylePos->mColumnGap;
+    childRIForMeasuringBSize.SetAvailableISize(DividedCrossSpaceForMeasuring(
+        childRIForMeasuringBSize.AvailableISize(),
+        containerStylePos->mFlexLineCount,
+        nsLayoutUtils::ResolveGapToLength(crossGapStyle, availSize.ISize(wm))));
+  }
+  childRIForMeasuringBSize.Init(PresContext());
 
   // When measuring flex item's content block-size, disregard the item's
   // min-block-size and max-block-size by resetting both to to their
@@ -6933,6 +6998,7 @@ nscoord nsFlexContainerFrame::ComputeIntrinsicISize(
   // first. This bool helps us handle that special-case.
   bool onFirstChild = true;
 
+  size_t numItems = 0;
   for (nsIFrame* childFrame : mFrames) {
     // Skip out-of-flow children because they don't participate in flex layout.
     if (childFrame->IsPlaceholderFrame()) {
@@ -6943,6 +7009,7 @@ nscoord nsFlexContainerFrame::ComputeIntrinsicISize(
       // If we're collapsed, we don't take space in the main axis.
       continue;
     }
+    numItems++;
 
     const auto childWM = childFrame->GetWritingMode();
     const IntrinsicSizeInput childInput(aInput, childWM, flexWM);
@@ -7028,6 +7095,25 @@ nscoord nsFlexContainerFrame::ComputeIntrinsicISize(
       largestLineISize = std::max(largestLineISize, lineISize);
     }
     containerISize = NSToCoordRoundWithClamp(largestLineISize);
+  }
+
+  // A column-oriented 'flex-wrap: balance' container with a 'flex-line-count'
+  // above one produces (at least) that many lines when its main axis is
+  // unconstrained, so its pref isize covers that many lines plus the gaps
+  // between them. We approximate each line's cross size with the largest item
+  // isize (the exact per-line sizes would require balancing the items by
+  // their bsizes, which aren't available during intrinsic inline sizing).
+  if (axisTracker.IsColumnOriented() && !isSingleLine &&
+      !!(stylePos->mFlexWrap & StyleFlexWrap::BALANCE) &&
+      stylePos->mFlexLineCount > 1 && aType == IntrinsicISizeType::PrefISize &&
+      numItems > 0) {
+    const nscoord crossGapSize = nsLayoutUtils::ResolveGapToLength(
+        stylePos->mColumnGap, NS_UNCONSTRAINEDSIZE);
+    const int64_t numLines =
+        std::min(int64_t(stylePos->mFlexLineCount), int64_t(numItems));
+    const int64_t balancedISize = numLines * int64_t(containerISize) +
+                                  (numLines - 1) * int64_t(crossGapSize);
+    containerISize = nscoord(std::min(balancedISize, int64_t(nscoord_MAX)));
   }
 
   return containerISize;
