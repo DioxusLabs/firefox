@@ -475,6 +475,18 @@ class nsFlexContainerFrame final : public nsContainerFrame,
                          nsTArray<FlexLine>& aLines, bool& aHasCollapsedItems);
 
   /**
+   * Repartitions the flex items that GenerateFlexLines() collected into a
+   * single line into balanced lines, for 'flex-wrap: balance'. The items are
+   * divided into contiguous lines (at least aFlexLineCount of them, or one
+   * line per item if there are fewer items) such that the largest line's
+   * outer hypothetical main size is as small as possible.
+   *
+   * https://drafts.csswg.org/css-flexbox-2/#balanced-line-breaking
+   */
+  void BalanceFlexLines(nsTArray<FlexLine>& aLines, nscoord aWrapThreshold,
+                        nscoord aMainGapSize, int32_t aFlexLineCount);
+
+  /**
    * Generates and returns a FlexLayoutResult that contains the FlexLines and
    * some sizing metrics that should be used to lay out a particular flex
    * container continuation (i.e. don't call this on the first-in-flow).

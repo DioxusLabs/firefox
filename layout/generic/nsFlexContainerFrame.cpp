@@ -7,6 +7,8 @@
 #include "nsFlexContainerFrame.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include "gfxContext.h"
 #include "mozilla/Baseline.h"
@@ -4227,6 +4229,321 @@ LogicalSide FlexboxAxisTracker::CrossAxisStartSide() const {
                                           : LogicalEdge::Start);
 }
 
+// Balanced line breaking for 'flex-wrap: balance', ported from Taffy's
+// implementation (https://github.com/DioxusLabs/taffy - see `mod balance` in
+// src/compute/flexbox.rs).
+// https://drafts.csswg.org/css-flexbox-2/#balanced-line-breaking
+namespace balance {
+
+// Score assigned to divisions that violate the line size constraint.
+static constexpr double kInfeasible = std::numeric_limits<double>::infinity();
+
+// Line sizing shared by the scoring and readback phases.
+struct LineSizes {
+  // Per item, the prefix sum of the item sizes through it (each item also
+  // contributes one trailing gap, so the size of the line holding items
+  // [start, end] is mSums[end] - mSums[start - 1] - mGapBetweenItems).
+  nsTArray<double> mSums;
+  // Per item, whether the item's (floored) size is zero.
+  nsTArray<bool> mIsZeroItem;
+  // The size of the gap between adjacent items on a line.
+  double mGapBetweenItems = 0.0;
+  // The container's inner main size, which lines may not exceed (unless they
+  // hold a single item).
+  double mLimit = 0.0;
+
+  // The total number of items.
+  size_t ItemCount() const { return mSums.Length(); }
+
+  // The size of the line holding items [aStart, aEnd].
+  double LineSize(size_t aStart, size_t aEnd) const {
+    const double startSum = aStart == 0 ? 0.0 : mSums[aStart - 1];
+    return mSums[aEnd] - startSum - mGapBetweenItems;
+  }
+
+  // The squared size of the line holding items [aStart, aEnd], or kInfeasible
+  // for a line of more than one item exceeding the limit.
+  double LineCost(size_t aStart, size_t aEnd) const {
+    const double size = LineSize(aStart, aEnd);
+    if (aEnd > aStart && size > mLimit) {
+      return kInfeasible;
+    }
+    return size * size;
+  }
+
+  // For every suffix of the items, the number of lines that greedy line
+  // breaking produces for it: each line collects consecutive items until the
+  // next item no longer fits, and if even the first item of a line doesn't
+  // fit, that line takes just the one (overflowing) item. (The entry for the
+  // empty suffix is zero.)
+  //
+  // This is also the *fewest* lines each suffix can validly be divided into,
+  // and a suffix can validly be divided into any number of lines from that
+  // count up to its item count: dividing at greedy line ends never violates
+  // the zero-sized-item rule (a line that can hold no more of the following
+  // items can never glue them), and from any in-range line count the same
+  // holds with line ends capped to leave one item per remaining line.
+  nsTArray<uint32_t> SuffixGreedyLineCounts() const {
+    const size_t itemCount = ItemCount();
+    nsTArray<uint32_t> counts(itemCount + 1);
+    counts.SetLength(itemCount + 1);
+    counts[itemCount] = 0;
+    // The (exclusive) end of the greedy first line of the suffix, which only
+    // moves down as the suffix grows leftwards since lines starting earlier
+    // are larger.
+    size_t lineEnd = itemCount;
+    for (size_t start = itemCount; start-- > 0;) {
+      while (lineEnd > start + 1 && LineSize(start, lineEnd - 1) > mLimit) {
+        lineEnd--;
+      }
+      counts[start] = 1 + counts[lineEnd];
+    }
+    return counts;
+  }
+
+  // For every start, the largest end such that the line holding items
+  // [start, end] does not exceed the limit (or start itself if even that one
+  // item overflows).
+  nsTArray<uint32_t> FitEnds() const {
+    const size_t itemCount = ItemCount();
+    nsTArray<uint32_t> fitEnds(itemCount);
+    // Lines starting later are smaller, so the fit end only moves up.
+    size_t fitEnd = 0;
+    for (size_t start = 0; start < itemCount; start++) {
+      if (fitEnd < start) {
+        fitEnd = start;
+      }
+      while (fitEnd + 1 < itemCount && LineSize(start, fitEnd + 1) <= mLimit) {
+        fitEnd++;
+      }
+      fitEnds.AppendElement(static_cast<uint32_t>(fitEnd));
+    }
+    return fitEnds;
+  }
+};
+
+// One row of the balancing dynamic program: divisions of item suffixes into
+// exactly `lines` lines.
+struct Row {
+  // The line sizing for the items being divided.
+  const LineSizes& mSizes;
+  // See LineSizes::FitEnds().
+  Span<const uint32_t> mFitEnds;
+  // The previous row: mPrev[start] is the minimum score of any valid division
+  // of items [start, ...) into exactly `lines - 1` lines (kInfeasible if there
+  // is none).
+  Span<const double> mPrev;
+  // The line ends that precede a non-zero item, in ascending order and capped
+  // to mMaxEnd. Line ends preceding a *zero* item are constrained by the
+  // zero-sized-item rule and handled separately: for a first line starting at
+  // `start`, the only end preceding a zero item that can be part of a valid
+  // division is min(mFitEnds[start], mMaxEnd) - the line extended as far as
+  // the limit and the remaining lines' one-item-each budget allow. Ending
+  // earlier is forbidden by the rule (the zero item could be glued: the
+  // extended line fits and, per LineSizes::SuffixGreedyLineCounts(), what
+  // remains after even the longest glued line divides validly into the
+  // remaining lines whenever what remains after the shorter line does, which
+  // it must for the division to be feasible at all), and ending later exceeds
+  // the limit on a line of more than one item.
+  Span<const uint32_t> mNonzeroEnds;
+  // The largest possible end of the first line: the remaining `lines - 1`
+  // lines need one item each.
+  size_t mMaxEnd = 0;
+};
+
+// Compute aCur[start] and aOpts[start] for start in [aStartLo, aStartHi],
+// where aCur[start] is the minimum over valid ends `end` of
+// aRow.mSizes.LineCost(start, end) + aRow.mPrev[end + 1] and aOpts[start] is
+// the largest end achieving that minimum. Ends preceding a non-zero item are
+// minimized over aRow.mNonzeroEnds[aColLo..aColHi]; the (at most one) end
+// preceding a zero item allowed by the zero-sized-item rule is merged in
+// afterwards.
+//
+// Uses the divide-and-conquer dynamic programming optimization: over the ends
+// preceding non-zero items, the cost function satisfies the concave
+// quadrangle inequality (it is the square of a quantity that increases in
+// `end` and decreases in `start`, plus a term depending on `end` alone, with
+// infeasibility monotone in line length), so the largest minimizing end is
+// non-decreasing in `start`. Solving the middle `start` therefore splits the
+// end range in two, and each recursion level scans each candidate end a
+// bounded number of times. (The ends constrained by the zero-sized-item rule
+// are *not* monotone this way, which is why they are excluded from the scan
+// and merged in separately.)
+static void FillRow(const Row& aRow, Span<double> aCur, Span<uint32_t> aOpts,
+                    size_t aStartLo, size_t aStartHi, size_t aColLo,
+                    size_t aColHi) {
+  if (aStartLo > aStartHi) {
+    return;
+  }
+  const size_t start = aStartLo + (aStartHi - aStartLo) / 2;
+
+  // Minimize over the in-range ends preceding a non-zero item, starting from
+  // `start` (the line must hold at least one item).
+  const size_t firstCol = std::lower_bound(aRow.mNonzeroEnds.cbegin() + aColLo,
+                                           aRow.mNonzeroEnds.cbegin() + aColHi,
+                                           static_cast<uint32_t>(start)) -
+                          aRow.mNonzeroEnds.cbegin();
+  double minCost = kInfeasible;
+  Maybe<size_t> minCol;
+  for (size_t col = firstCol; col < aColHi; col++) {
+    const size_t end = aRow.mNonzeroEnds[col];
+    const double lineCost = aRow.mSizes.LineCost(start, end);
+    if (lineCost == kInfeasible) {
+      // Every longer line also exceeds the limit.
+      break;
+    }
+    const double cost = lineCost + aRow.mPrev[end + 1];
+    // `<=` keeps the *largest* minimizing end, assigning the most items to
+    // the earliest lines as the tie-break requires.
+    if (cost <= minCost) {
+      minCost = cost;
+      minCol = Some(col);
+    }
+  }
+
+  // Merge the single end preceding a zero item that the zero-sized-item rule
+  // allows.
+  Maybe<size_t> minEnd =
+      minCol.map([&](size_t aCol) { return size_t(aRow.mNonzeroEnds[aCol]); });
+  const size_t zeroEnd = std::min(size_t(aRow.mFitEnds[start]), aRow.mMaxEnd);
+  if (aRow.mSizes.mIsZeroItem[zeroEnd + 1]) {
+    const double cost =
+        aRow.mSizes.LineCost(start, zeroEnd) + aRow.mPrev[zeroEnd + 1];
+    if (cost < minCost || (cost == minCost && (!minEnd || *minEnd < zeroEnd))) {
+      minCost = cost;
+      minEnd = Some(zeroEnd);
+    }
+  }
+
+  // Infeasible states are excluded from the range by the caller, and every
+  // feasible state has a valid transition (see
+  // LineSizes::SuffixGreedyLineCounts()).
+  MOZ_ASSERT(std::isfinite(minCost));
+  aCur[start] = minCost;
+  aOpts[start] = static_cast<uint32_t>(minEnd.valueOr(start));
+
+  // The zero-rule end is excluded from the narrowing: only the non-zero ends'
+  // minima are monotone.
+  if (start > aStartLo) {
+    const size_t colHi = minCol ? *minCol + 1 : aColHi;
+    FillRow(aRow, aCur, aOpts, aStartLo, start - 1, aColLo, colHi);
+  }
+  if (start < aStartHi) {
+    const size_t colLo = minCol.valueOr(firstCol);
+    FillRow(aRow, aCur, aOpts, start + 1, aStartHi, colLo, aColHi);
+  }
+}
+
+// Determine the number of items on each line that balances items across
+// lines, such that the largest line is as small as possible, with a minimum
+// of aMinLineCount lines (or one line per item if there are fewer items).
+//
+// aItemSizes must be non-empty and its entries non-negative. The returned
+// line item counts are all non-zero and sum to the number of items.
+//
+// Runs in O(lineCount * itemCount * log(itemCount)) time using
+// O(lineCount * itemCount) transient memory.
+static nsTArray<uint32_t> BalancedLineItemCounts(Span<const double> aItemSizes,
+                                                 double aLineLimit,
+                                                 double aGapBetweenItems,
+                                                 size_t aMinLineCount) {
+  const size_t itemCount = aItemSizes.Length();
+  MOZ_ASSERT(itemCount > 0);
+
+  LineSizes sizes;
+  sizes.mSums.SetCapacity(itemCount);
+  sizes.mIsZeroItem.SetCapacity(itemCount);
+  sizes.mGapBetweenItems = aGapBetweenItems;
+  sizes.mLimit = aLineLimit;
+  double sum = 0.0;
+  for (const double size : aItemSizes) {
+    MOZ_ASSERT(size >= 0.0);
+    sum += size + aGapBetweenItems;
+    sizes.mSums.AppendElement(sum);
+    sizes.mIsZeroItem.AppendElement(size == 0.0);
+  }
+
+  // suffixGreedy[start] is the number of lines greedy line breaking produces
+  // for items [start, ...), which is also the *fewest* lines the suffix can
+  // validly be divided into.
+  const nsTArray<uint32_t> suffixGreedy = sizes.SuffixGreedyLineCounts();
+  const size_t lineCount =
+      std::max(size_t(suffixGreedy[0]), std::min(aMinLineCount, itemCount));
+
+  nsTArray<uint32_t> itemCounts(lineCount);
+  if (lineCount == itemCount) {
+    // One item per line is the only division (this covers a `flex-line-count`
+    // of at least the item count as well as every item overflowing a line of
+    // its own).
+    for (size_t i = 0; i < itemCount; i++) {
+      itemCounts.AppendElement(1);
+    }
+    return itemCounts;
+  }
+
+  const nsTArray<uint32_t> fitEnds = sizes.FitEnds();
+  nsTArray<uint32_t> nonzeroEnds(itemCount - 1);
+  for (size_t end = 0; end + 1 < itemCount; end++) {
+    if (!sizes.mIsZeroItem[end + 1]) {
+      nonzeroEnds.AppendElement(static_cast<uint32_t>(end));
+    }
+  }
+
+  // prev[start] is the minimum total score of any valid division of items
+  // [start, ...) into exactly `lines - 1` lines (kInfeasible if there is
+  // none), and `cur` is the row being computed for `lines` lines: a division
+  // into `lines` lines is a first line [start, end] plus a division of
+  // [end + 1, ...) into `lines - 1` lines.
+  // opts[(lines - 2) * itemCount + start] records the largest end achieving
+  // cur[start], from which the chosen division is read back.
+  nsTArray<double> prev(itemCount);
+  for (size_t start = 0; start < itemCount; start++) {
+    prev.AppendElement(sizes.LineCost(start, itemCount - 1));
+  }
+  nsTArray<double> cur(itemCount);
+  for (size_t i = 0; i < itemCount; i++) {
+    cur.AppendElement(kInfeasible);
+  }
+  nsTArray<uint32_t> opts((lineCount - 1) * itemCount);
+  opts.SetLength((lineCount - 1) * itemCount);
+  for (size_t lines = 2; lines <= lineCount; lines++) {
+    // The remaining `lines - 1` lines need one item each, bounding this
+    // line's end.
+    const size_t maxEnd = itemCount - lines;
+    // Starts whose suffix doesn't fit in `lines` lines even with greedy
+    // breaking are infeasible; they form a prefix (a longer suffix never
+    // needs fewer lines), and excluding them keeps every state FillRow()
+    // solves feasible.
+    size_t firstStart = 0;
+    while (firstStart < maxEnd && size_t(suffixGreedy[firstStart]) > lines) {
+      cur[firstStart] = kInfeasible;
+      firstStart++;
+    }
+    const size_t colHi =
+        std::upper_bound(nonzeroEnds.cbegin(), nonzeroEnds.cend(),
+                         static_cast<uint32_t>(maxEnd)) -
+        nonzeroEnds.cbegin();
+    const Row row{sizes, fitEnds, prev, nonzeroEnds, maxEnd};
+    const Span<uint32_t> optsRow(opts.Elements() + (lines - 2) * itemCount,
+                                 itemCount);
+    FillRow(row, cur, optsRow, firstStart, maxEnd, 0, colHi);
+    std::swap(prev, cur);
+  }
+
+  // Read the division back out front to back.
+  MOZ_ASSERT(std::isfinite(prev[0]));
+  size_t start = 0;
+  for (size_t lines = lineCount; lines >= 2; lines--) {
+    const size_t end = opts[(lines - 2) * itemCount + start];
+    itemCounts.AppendElement(static_cast<uint32_t>(end - start + 1));
+    start = end + 1;
+  }
+  itemCounts.AppendElement(static_cast<uint32_t>(itemCount - start));
+  return itemCounts;
+}
+
+}  // namespace balance
+
 void nsFlexContainerFrame::GenerateFlexLines(
     const ReflowInput& aReflowInput, const nscoord aTentativeContentBoxMainSize,
     const nscoord aTentativeContentBoxCrossSize,
@@ -4242,6 +4559,12 @@ void nsFlexContainerFrame::GenerateFlexLines(
   // We have at least one FlexLine. Even an empty flex container has a single
   // (empty) flex line.
   FlexLine* curLine = ConstructNewFlexLine();
+
+  // For 'flex-wrap: balance', we collect every item into a single line first
+  // and repartition the items into balanced lines afterwards.
+  const bool isBalance =
+      !IsSingleLine(aReflowInput.mFrame, aReflowInput.mStylePosition) &&
+      !!(aReflowInput.mStylePosition->mFlexWrap & StyleFlexWrap::BALANCE);
 
   nscoord wrapThreshold;
   if (IsSingleLine(aReflowInput.mFrame, aReflowInput.mStylePosition)) {
@@ -4312,8 +4635,9 @@ void nsFlexContainerFrame::GenerateFlexLines(
     // Check if we need to wrap the newly appended item to a new line, i.e. if
     // its outer hypothetical main size pushes our line over the threshold.
     // But we don't wrap if the line-length is unconstrained, nor do we wrap if
-    // this was the first item on the line.
-    if (wrapThreshold != NS_UNCONSTRAINEDSIZE &&
+    // this was the first item on the line. (When balancing, the line breaks
+    // are chosen globally after this loop instead.)
+    if (!isBalance && wrapThreshold != NS_UNCONSTRAINEDSIZE &&
         curLine->Items().Length() > 1) {
       // If the line will be longer than wrapThreshold or at least as long as
       // nscoord_MAX because of the newly appended item, then wrap and move the
@@ -4340,6 +4664,56 @@ void nsFlexContainerFrame::GenerateFlexLines(
     curLine->AddLastItemToMainSizeTotals();
     itemIdxInContainer++;
   }
+
+  if (isBalance && !aLines[0].IsEmpty()) {
+    BalanceFlexLines(aLines, wrapThreshold, aMainGapSize,
+                     aReflowInput.mStylePosition->mFlexLineCount);
+  }
+}
+
+void nsFlexContainerFrame::BalanceFlexLines(nsTArray<FlexLine>& aLines,
+                                            nscoord aWrapThreshold,
+                                            nscoord aMainGapSize,
+                                            int32_t aFlexLineCount) {
+  MOZ_ASSERT(aLines.Length() == 1 && !aLines[0].IsEmpty(),
+             "Expecting all items to be collected in a single line");
+
+  // A line may not exceed the container's content-box main size, unless it
+  // holds a single item. With an unconstrained wrap threshold, only the
+  // requested minimum line count divides the items into lines.
+  const double lineLimit = aWrapThreshold == NS_UNCONSTRAINEDSIZE
+                               ? std::numeric_limits<double>::infinity()
+                               : double(aWrapThreshold);
+  const size_t minLineCount = size_t(std::max(aFlexLineCount, 1));
+
+  AutoTArray<double, 16> itemSizes;
+  itemSizes.SetCapacity(aLines[0].NumItems());
+  for (const FlexItem& item : aLines[0].Items()) {
+    // Floor each item's outer hypothetical main size at zero (it could be
+    // negative due to negative margins).
+    itemSizes.AppendElement(std::max(0.0, double(item.OuterMainSize())));
+  }
+
+  const nsTArray<uint32_t> itemCounts = balance::BalancedLineItemCounts(
+      itemSizes, lineLimit, double(std::max(aMainGapSize, 0)), minLineCount);
+
+  if (itemCounts.Length() <= 1) {
+    // All items stay on the one line they're already in.
+    return;
+  }
+
+  // Repartition the items into the balanced lines.
+  nsTArray<FlexItem> allItems = std::move(aLines[0].Items());
+  aLines.Clear();
+  size_t itemIdx = 0;
+  for (const uint32_t count : itemCounts) {
+    FlexLine* line = aLines.EmplaceBack(aMainGapSize);
+    for (uint32_t i = 0; i < count; i++) {
+      line->Items().AppendElement(std::move(allItems[itemIdx++]));
+      line->AddLastItemToMainSizeTotals();
+    }
+  }
+  MOZ_ASSERT(itemIdx == allItems.Length(), "Every item should be in a line");
 }
 
 nsFlexContainerFrame::FlexLayoutResult
@@ -6545,6 +6919,16 @@ nscoord nsFlexContainerFrame::ComputeIntrinsicISize(
   const bool isSingleLine = IsSingleLine(this, stylePos);
   const auto flexWM = GetWritingMode();
 
+  // For a row-oriented 'flex-wrap: balance' container with a 'flex-line-count'
+  // above one, the pref isize is the largest line when the items are balanced
+  // into that many lines (with no line size limit), rather than the sum of all
+  // the items. Collect the item isizes so we can balance them after the loop.
+  const bool isBalancedPrefISize =
+      axisTracker.IsRowOriented() && !isSingleLine &&
+      !!(stylePos->mFlexWrap & StyleFlexWrap::BALANCE) &&
+      stylePos->mFlexLineCount > 1 && aType == IntrinsicISizeType::PrefISize;
+  AutoTArray<double, 16> itemISizes;
+
   // The loop below sets aside space for a gap before each item besides the
   // first. This bool helps us handle that special-case.
   bool onFirstChild = true;
@@ -6613,8 +6997,10 @@ nscoord nsFlexContainerFrame::ComputeIntrinsicISize(
     // is the max of its items' min isizes.
     // * For a row-oriented multi-line flex container, the intrinsic
     // pref isize is former (sum), and its min isize is the latter (max).
-    if (axisTracker.IsRowOriented() &&
-        (isSingleLine || aType == IntrinsicISizeType::PrefISize)) {
+    if (isBalancedPrefISize) {
+      itemISizes.AppendElement(std::max(0.0, double(childISize)));
+    } else if (axisTracker.IsRowOriented() &&
+               (isSingleLine || aType == IntrinsicISizeType::PrefISize)) {
       containerISize += childISize;
       if (!onFirstChild) {
         containerISize += mainGapSize;
@@ -6623,6 +7009,25 @@ nscoord nsFlexContainerFrame::ComputeIntrinsicISize(
     } else {  // (col-oriented, or MinISize for multi-line row flex container)
       containerISize = std::max(containerISize, childISize);
     }
+  }
+
+  if (isBalancedPrefISize && !itemISizes.IsEmpty()) {
+    // Balance the items into the requested minimum number of lines, and take
+    // the largest resulting line as the container's pref isize.
+    const double gap = double(std::max(mainGapSize, 0));
+    const nsTArray<uint32_t> itemCounts = balance::BalancedLineItemCounts(
+        itemISizes, std::numeric_limits<double>::infinity(), gap,
+        size_t(std::max(stylePos->mFlexLineCount, 1)));
+    double largestLineISize = 0.0;
+    size_t itemIdx = 0;
+    for (const uint32_t count : itemCounts) {
+      double lineISize = double(count - 1) * gap;
+      for (uint32_t i = 0; i < count; i++) {
+        lineISize += itemISizes[itemIdx++];
+      }
+      largestLineISize = std::max(largestLineISize, lineISize);
+    }
+    containerISize = NSToCoordRoundWithClamp(largestLineISize);
   }
 
   return containerISize;
