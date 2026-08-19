@@ -10976,6 +10976,14 @@
   mirror: always
   rust: true
 
+# Is support for flex-wrap: balance and flex-line-count enabled?
+# https://drafts.csswg.org/css-flexbox-2/#balanced-line-breaking
+- name: layout.css.flex-wrap-balance.enabled
+  type: RelaxedAtomicBool
+  value: @IS_NIGHTLY_BUILD@
+  mirror: always
+  rust: true
+
 # Whether to use tight bounds for floating ::first-letter (legacy Gecko behavior)
 # or loose bounds based on overall font metrics (WebKit/Blink-like behavior)?
 # Values mean:

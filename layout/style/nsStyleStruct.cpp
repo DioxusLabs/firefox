@@ -1113,6 +1113,7 @@ nsStylePosition::nsStylePosition()
       mJustifySelf({StyleAlignFlags::AUTO}),
       mFlexDirection(StyleFlexDirection::Row),
       mFlexWrap(StyleFlexWrap::NOWRAP),
+      mFlexLineCount(1),
       mObjectFit(StyleObjectFit::Fill),
       mBoxSizing(StyleBoxSizing::ContentBox),
       mOrder(0),
@@ -1165,6 +1166,7 @@ nsStylePosition::nsStylePosition(const nsStylePosition& aSource)
       mJustifySelf(aSource.mJustifySelf),
       mFlexDirection(aSource.mFlexDirection),
       mFlexWrap(aSource.mFlexWrap),
+      mFlexLineCount(aSource.mFlexLineCount),
       mObjectFit(aSource.mObjectFit),
       mBoxSizing(aSource.mBoxSizing),
       mOrder(aSource.mOrder),
@@ -1257,7 +1259,8 @@ nsChangeHint nsStylePosition::CalcDifference(
   // - flex-wrap changes whether a flex container's children are wrapped, which
   //   impacts their sizing/positioning and hence impacts the container's size.
   if (mFlexDirection != aNewData.mFlexDirection ||
-      mFlexWrap != aNewData.mFlexWrap) {
+      mFlexWrap != aNewData.mFlexWrap ||
+      mFlexLineCount != aNewData.mFlexLineCount) {
     return hint | nsChangeHint_AllReflowHints;
   }
 

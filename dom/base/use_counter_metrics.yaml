@@ -108,7 +108,7 @@ use.counter:
     send_in_pings:
       - use-counters
 
-# Total of 2620 use counter metrics (excludes denominators).
+# Total of 2622 use counter metrics (excludes denominators).
 # Total of 412 'page' use counters.
 use.counter.page:
   svgsvgelement_getelementbyid:
@@ -19707,7 +19707,7 @@ use.counter.deprecated_ops.doc:
     send_in_pings:
       - use-counters
 
-# Total of 734 'CSS (page)' use counters.
+# Total of 735 'CSS (page)' use counters.
 use.counter.css.page:
   css_align_items:
     type: counter
@@ -24826,57 +24826,6 @@ use.counter.css.page:
     send_in_pings:
       - use-counters
 
-  css_moz_box_ordinal_group:
-    type: counter
-    description: >
-      Whether a page used the CSS property -moz-box-ordinal-group.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  css_order:
-    type: counter
-    description: >
-      Whether a page used the CSS property order.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  css_x_span:
-    type: counter
-    description: >
-      Whether a page used the CSS property -x-span.
-      Compare against `use.counter.top_level_content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
   css_marker_end:
     type: counter
     description: >
@@ -25051,6 +25000,74 @@ use.counter.css.page:
     type: counter
     description: >
       Whether a page used the CSS property grid-row-start.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_flex_line_count:
+    type: counter
+    description: >
+      Whether a page used the CSS property flex-line-count.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_moz_box_ordinal_group:
+    type: counter
+    description: >
+      Whether a page used the CSS property -moz-box-ordinal-group.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_order:
+    type: counter
+    description: >
+      Whether a page used the CSS property order.
+      Compare against `use.counter.top_level_content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_x_span:
+    type: counter
+    description: >
+      Whether a page used the CSS property -x-span.
       Compare against `use.counter.top_level_content_documents_destroyed`
       to calculate the rate.
     bugs:
@@ -32187,7 +32204,7 @@ use.counter.css.page:
     send_in_pings:
       - use-counters
 
-# Total of 734 'CSS (document)' use counters.
+# Total of 735 'CSS (document)' use counters.
 use.counter.css.doc:
   css_align_items:
     type: counter
@@ -37306,57 +37323,6 @@ use.counter.css.doc:
     send_in_pings:
       - use-counters
 
-  css_moz_box_ordinal_group:
-    type: counter
-    description: >
-      Whether a document used the CSS property -moz-box-ordinal-group.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  css_order:
-    type: counter
-    description: >
-      Whether a document used the CSS property order.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
-  css_x_span:
-    type: counter
-    description: >
-      Whether a document used the CSS property -x-span.
-      Compare against `use.counter.content_documents_destroyed`
-      to calculate the rate.
-    bugs:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    data_reviews:
-      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
-    notification_emails:
-      - dom-core@mozilla.com
-      - emilio@mozilla.com
-    expires: never
-    send_in_pings:
-      - use-counters
-
   css_marker_end:
     type: counter
     description: >
@@ -37531,6 +37497,74 @@ use.counter.css.doc:
     type: counter
     description: >
       Whether a document used the CSS property grid-row-start.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_flex_line_count:
+    type: counter
+    description: >
+      Whether a document used the CSS property flex-line-count.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_moz_box_ordinal_group:
+    type: counter
+    description: >
+      Whether a document used the CSS property -moz-box-ordinal-group.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_order:
+    type: counter
+    description: >
+      Whether a document used the CSS property order.
+      Compare against `use.counter.content_documents_destroyed`
+      to calculate the rate.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1852098
+    notification_emails:
+      - dom-core@mozilla.com
+      - emilio@mozilla.com
+    expires: never
+    send_in_pings:
+      - use-counters
+
+  css_x_span:
+    type: counter
+    description: >
+      Whether a document used the CSS property -x-span.
       Compare against `use.counter.content_documents_destroyed`
       to calculate the rate.
     bugs:

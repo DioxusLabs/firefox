@@ -12432,6 +12432,36 @@ var gCSSProperties = {
   },
 }; // end of gCSSProperties
 
+if (IsCSSPropertyPrefEnabled("layout.css.flex-wrap-balance.enabled")) {
+  gCSSProperties["flex-wrap"].other_values.push(
+    "balance",
+    "wrap balance",
+    "balance wrap",
+    "wrap-reverse balance",
+    "balance wrap-reverse"
+  );
+  gCSSProperties["flex-wrap"].invalid_values.push(
+    "balance balance",
+    "nowrap balance",
+    "balance nowrap"
+  );
+  gCSSProperties["flex-flow"].other_values.push(
+    "balance",
+    "row balance",
+    "balance column",
+    "wrap-reverse balance row"
+  );
+  gCSSProperties["flex-flow"].invalid_values.push("nowrap balance");
+  gCSSProperties["flex-line-count"] = {
+    domProp: "flexLineCount",
+    inherited: false,
+    type: CSS_TYPE_LONGHAND,
+    initial_values: ["1"],
+    other_values: ["2", "10", "123"],
+    invalid_values: ["0", "-1", "1.5", "1px", "10%", "auto", "none"],
+  };
+}
+
 if (IsCSSPropertyPrefEnabled("layout.css.line-clamp.enabled")) {
   gCSSProperties["line-clamp"] = {
     domProp: "lineClamp",

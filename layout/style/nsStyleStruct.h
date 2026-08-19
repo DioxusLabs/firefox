@@ -1050,6 +1050,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStylePosition {
   mozilla::StyleSelfAlignment mJustifySelf;
   mozilla::StyleFlexDirection mFlexDirection;
   mozilla::StyleFlexWrap mFlexWrap;
+  int32_t mFlexLineCount;
   mozilla::StyleObjectFit mObjectFit;
   mozilla::StyleBoxSizing mBoxSizing;
   int32_t mOrder;

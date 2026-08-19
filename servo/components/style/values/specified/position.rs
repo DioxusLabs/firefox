@@ -1787,8 +1787,8 @@ impl Parse for MasonryAutoFlow {
 fn flex_wrap_balance_enabled() -> bool {
     #[cfg(feature = "servo")]
     return static_prefs::pref!("layout.flexbox.balance");
-    #[cfg(not(feature = "servo"))]
-    return false;
+    #[cfg(feature = "gecko")]
+    return static_prefs::pref!("layout.css.flex-wrap-balance.enabled");
 }
 
 /// The specified and computed value of the `flex-wrap` property:
